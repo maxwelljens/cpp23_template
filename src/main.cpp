@@ -1,34 +1,10 @@
-#include <expected>
-#include <span>
-#include <string>
-#include <print>
-#include <vector>
+#include "math_utils.hpp"
+
 #include <array>
+#include <print>
 #include <ranges>
-#include <concepts>
-
-// ── Constrained template using Concepts (C++20) ───────────────────────────
-auto add(std::integral auto a, std::integral auto b)
-{
-    return a + b;
-}
-
-// ── Error handling with std::expected (C++23) ────────────────────────────
-std::expected<int, std::string> divide(int a, int b)
-{
-    if (b == 0)
-        return std::unexpected("division by zero");
-    return a / b;
-}
-
-// ── Span instead of pointer + size ─────────────────────────────────────────
-int sum(std::span<const int> values)
-{
-    int total = 0;
-    for (auto v : values)
-        total += v;
-    return total;
-}
+#include <string>
+#include <vector>
 
 // ── Deducing this (C++23) ──────────────────────────────────────────────────
 struct Accumulator
@@ -40,14 +16,18 @@ struct Accumulator
     auto& back(this auto&& self) { return self.data.back(); }
 };
 
-auto main() -> int
+// noexcept + NOLINT: bugprone-exception-escape demands main handle every
+// exception, but this demo has no recovery path — an escaping exception
+// terminates deliberately (std::println/format can throw on stream errors).
+// The check stays enabled project-wide for destructors and move operations.
+auto main() noexcept -> int // NOLINT(bugprone-exception-escape)
 {
     std::println("=== Guarded C++23 ===");
 
-    // 1. Concepts — readable constrained templates
+    // 1. Concepts — readable constrained templates (defined in math_utils.hpp)
     std::println("add(3, 4)           = {}", add(3, 4));
 
-    // 2. std::expected — explicit error paths
+    // 2. std::expected — explicit error paths (divide() in math_utils.hpp)
     auto result = divide(10, 2);
     if (result) {
         std::println("divide(10, 2)       = {}", *result);
@@ -58,7 +38,7 @@ auto main() -> int
         std::println("divide(10, 0)       = error: {}", bad.error());
     }
 
-    // 3. std::span — safe bounds-checked views
+    // 3. std::span — safe bounds-checked views (sum() in math_utils.hpp)
     std::array arr{1, 2, 3, 4, 5};
     std::println("sum(arr)            = {}", sum(arr));
 

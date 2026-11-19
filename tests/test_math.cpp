@@ -1,15 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include <expected>
-#include <string>
-#include <span>
+#include "math_utils.hpp"
+
 #include <array>
 #include <vector>
-
-// Forward declarations for functions exported from the library.
-// The linker resolves these against libexample_lib.a.
-std::expected<int, std::string> divide(int a, int b);
-int sum(std::span<const int> values);
 
 TEST_CASE("divide", "[math]")
 {
@@ -21,7 +15,7 @@ TEST_CASE("divide", "[math]")
     REQUIRE(not fail.has_value());
     CHECK(fail.error() == "division by zero");
 
-    CHECK(divide(7, 3).value() == 2);  // integer division
+    CHECK(divide(7, 3) == 2);  // integer division
 }
 
 TEST_CASE("sum", "[math]")

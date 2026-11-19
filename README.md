@@ -46,36 +46,52 @@ overloaded-virtual mismatches (`-Woverloaded-virtual`).  Every one of these
 has been responsible for production incidents.
 
 **STL hardening turns undefined behavior into a clean abort.**  By default
-`std::vector::operator[]` does not check bounds.  With `_GLIBCXX_DEBUG`
+`std::vector::operator[]` does not check bounds.  With `_GLIBCXX_ASSERTIONS`
 enabled, an out-of-bounds access crashes immediately at the point of
 failure instead of silently corrupting memory and manifesting hours later
-in an unrelated function.  This applies to all standard containers,
-iterators, and algorithms.  The cost is a modest runtime slowdown that is
-perfectly acceptable for debug and test builds.
+in an unrelated function.  This covers `operator[]` on the standard
+containers and strings, plus `front()`, `back()`, and `std::span`.
+
+The define is deliberately `_GLIBCXX_ASSERTIONS` rather than the stronger
+`_GLIBCXX_DEBUG`: that define replaces standard containers with checked
+wrappers that have a different layout and mangling, which is only safe if
+*every* translation unit in the binary — including third-party static
+libraries such as Catch2 — is compiled with it.  That would force a global
+define, contradicting the per-target firewall.  `_GLIBCXX_ASSERTIONS` has no
+ABI effect, so it is attached to the library as a `PUBLIC` usage
+requirement: the executable and the tests inherit the same define through
+linking.  It is gated to Debug builds, so Release builds pay no runtime
+cost.
 
 **Sanitisers catch what the compiler cannot see at compile time.**
 UndefinedBehaviorSanitizer instruments the binary to detect integer
 overflow, misaligned access, null-pointer dereferences through
 references, and violated type-punning rules at runtime.  The template
-also probes for AddressSanitizer + LeakSanitizer: if the runtime library
-is present on the system, use-after-free, heap-buffer-overflow, and
-memory leaks are detected automatically.  If ASan is absent, UBSan
-still runs — no failure, no configuration change needed.
+also probes for AddressSanitizer + LeakSanitizer at configure time: if the
+runtime library is present on the system, use-after-free,
+heap-buffer-overflow, and memory leaks are detected automatically.  If
+ASan is absent, UBSan still runs — no failure, no configuration change
+needed.  The whole block is gated by `<PREFIX>_ENABLE_SANITIZERS`, and
+the probe is skipped entirely when the option is OFF.
 
 **clang-tidy adds a second opinion.**  The included `.clang-tidy`
 applies the C++ Core Guidelines, banning raw memory ownership, pointer
 arithmetic, and C-style arrays at the static-analysis level.  It is
 optional and pinned to version 19 or newer — earlier versions do not
-understand `-std=c++23`.  The compiler firewall already catches the
-vast majority of issues; clang-tidy is a safety net for the remaining
+understand `-std=c++23`.  It is attached per target by `apply_firewall()`,
+and a `-header-filter` limits diagnostics to this project's `src/` and
+`tests/` trees — so neither analysis nor reporting ever touches
+third-party code such as Catch2.  The compiler firewall already catches
+the vast majority of issues; clang-tidy is a safety net for the remaining
 patterns that are technically valid C++ but indicative of fragile design.
 
 ## The C++23 conventions the template demonstrates
 
 These are *not* enforced by the build — they cannot be, because they are
-design choices, not syntax errors.  The template shows them in
-`src/main.cpp` so that a contributor sees the intended style on first
-read.
+design choices, not syntax errors.  The template demonstrates them in
+`src/main.cpp` and `src/math_utils.hpp` so that a contributor sees the
+intended style on first read — the executable includes the library header
+and uses its functions rather than re-implementing them.
 
 **`std::println` over `printf` or `std::cout`.**  Type-safe,
 buffer-overflow-proof, and Python-like formatting syntax.  `printf` relies
@@ -114,6 +130,19 @@ cmake --build build
 ctest --test-dir build
 ```
 
+### Makefile shortcuts
+
+The convenience `Makefile` derives the target names from the `project()`
+line (so renaming the project needs no Makefile edits) and wraps the
+common workflow:
+
+```bash
+make build     # configure + build (Debug)
+make run       # build and run the executable
+make test      # build and run the test suite
+make rebuild   # clean + build
+```
+
 ### Options
 
 Options are prefixed with your project name (uppercased, non-alphanumeric
@@ -122,9 +151,9 @@ characters replaced by underscores).  For the default project name
 
 | Flag | Default | What it controls |
 |------|---------|------------------|
-| `<PREFIX>_ENABLE_CLANG_TIDY=ON` | OFF | clang-tidy with C++ Core Guidelines (needs v19+) |
-| `<PREFIX>_ENABLE_SANITIZERS=ON` | ON | UBSan (+ ASan+LSan if linkable) |
-| `<PREFIX>_ENABLE_STL_HARDENING=ON` | ON | `_GLIBCXX_DEBUG` bounds checking |
+| `<PREFIX>_ENABLE_CLANG_TIDY=ON` | OFF | clang-tidy with C++ Core Guidelines (needs v19+), project targets only |
+| `<PREFIX>_ENABLE_SANITIZERS=ON` | ON | UBSan (+ ASan+LSan if linkable); OFF removes all sanitizer flags |
+| `<PREFIX>_ENABLE_STL_HARDENING=ON` | ON | `_GLIBCXX_ASSERTIONS` bounds checking (Debug only) |
 | `<PREFIX>_BUILD_TESTS=ON` | ON | Catch2 v3 test suite |
 
 ### Requirements
@@ -138,6 +167,7 @@ characters replaced by underscores).  For the default project name
 ```
 CMakeLists.txt        →  compiler firewall, sanitisers, hardening (change project() on line 2)
 .clang-tidy           →  optional C++ Core Guidelines layer
+Makefile              →  convenience wrapper (derives target names from project())
 src/
   CMakeLists.txt      →  derives target names from ${PROJECT_NAME}
   main.cpp            →  C++23 feature demonstrations

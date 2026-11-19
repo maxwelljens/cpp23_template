@@ -1,6 +1,10 @@
 # ── Guarded C++23 clang-tidy Configuration ─────────────────────────────────
 #   Requires clang-tidy ≥ 19 for C++23 support.
-#   Enable with: cmake -DEXAMPLE_ENABLE_CLANG_TIDY=ON -B build
+#   Enable with: cmake -D<PREFIX>_ENABLE_CLANG_TIDY=ON -B build
+#   (<PREFIX> is the project name uppercased, e.g. CPP23_TEMPLATE.)
+#
+#   Attached per-target by apply_firewall() in CMakeLists.txt, so it runs on
+#   project code only — never on third-party code such as Catch2.
 
 Checks: >
   -*,
@@ -10,14 +14,19 @@ Checks: >
   modernize-*,
   performance-*,
   -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-avoid-do-while,
   -bugprone-easily-swappable-parameters,
   -modernize-use-trailing-return-type,
   -bugprone-reserved-identifier
 
 WarningsAsErrors: '*'
 
-CheckOptions:
-  cppcoreguidelines-pro-bounds-array-to-pointer-decay: true
-  cppcoreguidelines-pro-bounds-pointer-arithmetic: true
-  cppcoreguidelines-owning-memory: true
-  cppcoreguidelines-pro-type-cstyle-cast: true
+# -cppcoreguidelines-avoid-do-while: Catch2's CHECK/REQUIRE macros expand to
+#   do { ... } while (0) at their use site in USER translation units, so the
+#   check fires on every assertion line.  Header filtering cannot help (the
+#   expansion location is the main file) and per-line NOLINT is untenable.
+
+# The checks above are enabled through the cppcoreguidelines-* glob; they take
+# no per-check options except cppcoreguidelines-owning-memory
+# (LegacyResourceProducers / LegacyResourceConsumers), whose defaults already
+# match this project's intent.

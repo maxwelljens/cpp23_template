@@ -9,6 +9,15 @@ cmake --build build
 ctest --test-dir build           # run tests
 ```
 
+Or via the convenience `Makefile` (derives target names from `project()`):
+
+```bash
+make build    # configure + build (Debug)
+make run      # build and run the executable
+make test     # build and run the test suite
+make rebuild  # clean + build
+```
+
 **Requirements**: CMake ≥ 3.28, GCC ≥ 14. clang-tidy ≥ 19 optional.
 
 ---
@@ -24,7 +33,8 @@ ctest --test-dir build           # run tests
   leak into third-party code (Catch2, etc.).
 - **Sanitizers auto-probe ASan.** The build tries to compile+link a tiny test with
   `-fsanitize=address,leak`. If it works, ASan+LSan+UBSan all run in Debug builds.
-  If not, only UBSan runs — no failure, no config change.
+  If not, only UBSan runs — no failure, no config change. The probe is skipped
+  entirely when `<PREFIX>_ENABLE_SANITIZERS=OFF`, which removes all sanitizer flags.
 
 ### Target naming convention
 
@@ -39,9 +49,9 @@ ctest --test-dir build           # run tests
 | Flag | Default | Notes |
 |------|---------|-------|
 | `CPP23_TEMPLATE_ENABLE_CLANG_TIDY=ON` | OFF | Needs clang-tidy ≥ 19 (C++23 support) |
-| `CPP23_TEMPLATE_ENABLE_SANITIZERS=ON` | ON | UBSan always; ASan+LSan if linkable |
-| `CPP23_TEMPLATE_ENABLE_STL_HARDENING=ON` | ON | `_GLIBCXX_DEBUG` bounds checking |
-| `CPP23_TEMPLATE_BUILD_TESTS=ON` | ON | Fetches Catch2 v3.7.0 via FetchContent |
+| `CPP23_TEMPLATE_ENABLE_SANITIZERS=ON` | ON | UBSan always; ASan+LSan if linkable (probe skipped when OFF) |
+| `CPP23_TEMPLATE_ENABLE_STL_HARDENING=ON` | ON | `_GLIBCXX_ASSERTIONS` bounds checking (Debug only) |
+| `CPP23_TEMPLATE_BUILD_TESTS=ON` | ON | Fetches Catch2 v3.16.1 via FetchContent |
 
 **Renaming the project changes the prefix.** If `project(foo-bar ...)` then prefix
 becomes `FOO_BAR`. All four option flags rename themselves automatically.
@@ -55,6 +65,7 @@ CMakeLists.txt          ← compiler firewall, sanitizers, options (change proje
 .clang-tidy             ← C++ Core Guidelines (optional, v19+)
 .gitignore
 AGENTS.md
+Makefile                ← convenience wrapper (derives target names from project())
 README.md
 src/
   CMakeLists.txt        ← library + executable targets
@@ -65,7 +76,6 @@ tests/
   CMakeLists.txt        ← Catch2 v3 fetched from GitHub
   test_main.cpp         ← intentionally BLANK (Catch2WithMain provides main())
   test_math.cpp         ← unit tests for math_utils
-build_rel/              ← stale build (from when project was named "example")
 ```
 
 ---
@@ -93,10 +103,13 @@ build_rel/              ← stale build (from when project was named "example")
 
 ## Testing (Catch2 v3)
 
-- Catch2 is fetched via `FetchContent` from `https://github.com/catchorg/Catch2.git` (tag `v3.7.0`).
+- Catch2 is fetched via `FetchContent` from `https://github.com/catchorg/Catch2.git` (tag `v3.16.1`).
 - **`test_main.cpp` is intentionally empty.** The `Catch2::Catch2WithMain` target provides `main()`.
 - Tests use `TEST_CASE("name", "[tag]")` with `REQUIRE` (fatal on failure) and `CHECK` (non-fatal).
-- Test files forward-declare library functions (no header includes the `.cpp` — the linker resolves against `*_lib.a`).
+- Test files `#include` the public header `math_utils.hpp` (exported via
+  `target_include_directories(... PUBLIC ...)`) and link `${PROJECT_NAME}_lib`.
+  The header is the single source of truth for signatures — a signature change
+  becomes a compile error, not a link error.
 - Add new test files to `tests/CMakeLists.txt` in the `add_executable(...)` call.
 
 ---
@@ -133,19 +146,36 @@ apply_stl_hardening(my_new_lib)
 
 If you change `project(cpp23-template ...)` to `project(my-app ...)`, all CMake
 flags become `MY_APP_ENABLE_CLANG_TIDY`, `MY_APP_BUILD_TESTS`, etc. The
-`PROJ_PREFIX` variable in CMakeLists.txt auto-derives this, but any CI script or
-`.clang-tidy` comment referencing `EXAMPLE_ENABLE_*` will need updating.
+`PROJ_PREFIX` variable in CMakeLists.txt auto-derives this, and both `.clang-tidy`
+(a `<PREFIX>` placeholder comment) and `Makefile` (parses `project()` from the root
+CMakeLists) follow automatically. Only CI scripts or other external references to
+the old prefix will need updating.
 
-### 4. `add()` is defined in both the header and `main.cpp`
+### 4. Library functions are defined once, in the header
 
-The template demonstrates the same `add()` constrained template in both
-`math_utils.hpp` and `main.cpp`. This is intentional redundancy for a demo
-project. In real code, define constrained templates once in a header.
+`add()`, `divide()`, and `sum()` are defined in `math_utils.hpp` (with
+implementations in `math_utils.cpp`); `main.cpp` includes the header and uses
+them. Do NOT re-declare or re-implement library symbols in `main.cpp` — include
+the header instead. This keeps the executable wired to the library it links.
 
-### 5. build_rel directory is stale
+### 5. Stale build directories break reconfiguration
 
-The `build_rel/` directory was configured when the project was named `example`
-with `BUILD_TESTS=OFF`. Delete it and regenerate.
+CMake stores the absolute source path in `build/CMakeCache.txt`. After moving or
+renaming the checkout — or after changing how targets are configured — wipe
+`build/` (and any `build_*`) before reconfiguring, or configure fails with
+`CMakeCache.txt directory ... is different than ...`. (A leftover `build_rel/`
+from the old `example` project name has been removed.)
+
+### 6. STL hardening uses `_GLIBCXX_ASSERTIONS`, not `_GLIBCXX_DEBUG`
+
+`_GLIBCXX_ASSERTIONS` is ABI-safe: it adds bounds checks to `operator[]` etc.
+without changing container layout or mangling, so it can be applied per target.
+`_GLIBCXX_DEBUG` swaps in checked wrappers with a different ABI (`std::vector`
+grows from 24 to 56 bytes) and is only safe if EVERY translation unit in the
+binary — including third-party static libs like Catch2 — is compiled with it.
+Do not switch to `_GLIBCXX_DEBUG` unless you also apply it globally to all
+targets and dependencies. Hardening is attached `PUBLIC` on the library, so
+`main.cpp` and the tests inherit it through linking; it is Debug-only.
 
 ---
 
@@ -156,7 +186,8 @@ with `BUILD_TESTS=OFF`. Delete it and regenerate.
    - Library: add sources to `add_library(${PROJECT_NAME}_lib ...)`.
    - New executable: call `add_executable(...)`, link `${PROJECT_NAME}_lib`, call all three helper functions.
 3. Create test file in `tests/`, add to `tests/CMakeLists.txt`.
-4. Forward-declare symbols in the test file (header is fine too if the library exposes it).
+4. `#include` the public header in the test file (the library exports its
+   include directory as `PUBLIC`, so it resolves through linking).
 
 ---
 
